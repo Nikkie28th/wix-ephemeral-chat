@@ -3,145 +3,149 @@ const WebSocket = require("ws");
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log("🟢 Chat WebSocket rodando na porta", PORT);
-
 /*
  Estrutura:
  rooms = {
-   roomId: {
-     users: Map(socket, { id, name, avatar }),
-     sockets: Set(socket)
-   }
+   roomId: Set<WebSocket>
+ }
+
+ typingUsers = {
+   roomId: Set<userId>
  }
 */
-const rooms = new Map();
 
-// ===============================
-// FUNÇÕES AUXILIARES
-// ===============================
-function broadcast(roomId, data) {
-  const room = rooms.get(roomId);
-  if (!room) return;
+const rooms = {};
+const typingUsers = {};
 
-  const message = JSON.stringify(data);
-  room.sockets.forEach(ws => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(message);
-    }
-  });
-}
+console.log("🟢 Chat WebSocket rodando na porta", PORT);
 
-function getOnlineList(roomId) {
-  const room = rooms.get(roomId);
-  if (!room) return [];
-
-  return Array.from(room.users.values());
-}
-
-// ===============================
-// CONEXÃO
-// ===============================
 wss.on("connection", (ws) => {
 
-  let currentRoom = null;
-  let currentUser = null;
-
-  // ===========================
-  // MENSAGENS RECEBIDAS
-  // ===========================
-  ws.on("message", (raw) => {
+  ws.on("message", (message) => {
     let data;
+
     try {
-      data = JSON.parse(raw.toString());
-    } catch {
+      data = JSON.parse(message);
+    } catch (err) {
       return;
     }
 
-    // ---------------------------
-    // JOIN ROOM
-    // ---------------------------
+    /* =========================
+       JOIN (ENTRAR NA SALA)
+    ========================= */
     if (data.type === "join") {
-      const { roomId, user } = data;
+      ws.roomId = data.roomId;
+      ws.user = data.user;
 
-      if (!roomId || !user?.id) return;
-
-      currentRoom = roomId;
-      currentUser = user;
-
-      if (!rooms.has(roomId)) {
-        rooms.set(roomId, {
-          users: new Map(),
-          sockets: new Set()
-        });
+      if (!rooms[ws.roomId]) {
+        rooms[ws.roomId] = new Set();
       }
 
-      const room = rooms.get(roomId);
-      room.sockets.add(ws);
-      room.users.set(ws, user);
+      rooms[ws.roomId].add(ws);
 
-      // Envia lista atual de online
-      ws.send(JSON.stringify({
-        type: "online-list",
-        users: getOnlineList(roomId)
-      }));
-
-      // Broadcast para os outros
-      broadcast(roomId, {
-        type: "user-joined",
-        user
-      });
-
-      broadcast(roomId, {
-        type: "online-list",
-        users: getOnlineList(roomId)
-      });
+      // envia lista de online
+      sendOnlineList(ws.roomId);
 
       return;
     }
 
-    // ---------------------------
-    // MESSAGE
-    // ---------------------------
+    /* =========================
+       MENSAGEM
+    ========================= */
     if (data.type === "message") {
-      if (!currentRoom || !currentUser) return;
+      const room = ws.roomId;
+      if (!room || !rooms[room]) return;
 
-      const text = String(data.text || "").trim();
-      if (!text) return;
+      // remove status digitando
+      typingUsers[room]?.delete(ws.user.id);
 
-      broadcast(currentRoom, {
-        type: "message",
-        user: currentUser,
-        text,
-        timestamp: Date.now()
+      rooms[room].forEach(client => {
+        client.send(JSON.stringify({
+          type: "message",
+          user: ws.user,
+          text: data.text
+        }));
       });
 
+      // atualiza digitando
+      broadcastTyping(room);
+
       return;
+    }
+
+    /* =========================
+       DIGITANDO
+    ========================= */
+    if (data.type === "typing") {
+      const room = ws.roomId;
+      if (!room || !ws.user) return;
+
+      if (!typingUsers[room]) {
+        typingUsers[room] = new Set();
+      }
+
+      if (data.typing) {
+        typingUsers[room].add(ws.user.id);
+      } else {
+        typingUsers[room].delete(ws.user.id);
+      }
+
+      broadcastTyping(room);
     }
   });
 
-  // ===========================
-  // DESCONEXÃO
-  // ===========================
+  /* =========================
+     SAIR / DESCONECTAR
+  ========================= */
   ws.on("close", () => {
-    if (!currentRoom || !rooms.has(currentRoom)) return;
+    const room = ws.roomId;
+    if (!room || !rooms[room]) return;
 
-    const room = rooms.get(currentRoom);
-    room.sockets.delete(ws);
-    room.users.delete(ws);
+    rooms[room].delete(ws);
 
-    broadcast(currentRoom, {
-      type: "user-left",
-      user: currentUser
-    });
+    // remove digitando
+    typingUsers[room]?.delete(ws.user?.id);
 
-    broadcast(currentRoom, {
-      type: "online-list",
-      users: getOnlineList(currentRoom)
-    });
-
-    // Remove sala vazia
-    if (room.sockets.size === 0) {
-      rooms.delete(currentRoom);
+    // limpa sala vazia
+    if (rooms[room].size === 0) {
+      delete rooms[room];
+      delete typingUsers[room];
+    } else {
+      sendOnlineList(room);
+      broadcastTyping(room);
     }
   });
 });
+
+/* =========================
+   FUNÇÕES AUXILIARES
+========================= */
+
+function sendOnlineList(roomId) {
+  const users = Array.from(rooms[roomId]).map(ws => ws.user);
+
+  rooms[roomId].forEach(client => {
+    client.send(JSON.stringify({
+      type: "online-list",
+      users
+    }));
+  });
+}
+
+function broadcastTyping(roomId) {
+  if (!typingUsers[roomId]) return;
+
+  const usersTyping = Array.from(typingUsers[roomId])
+    .map(id => {
+      const client = [...rooms[roomId]].find(ws => ws.user.id === id);
+      return client?.user?.name;
+    })
+    .filter(Boolean);
+
+  rooms[roomId].forEach(client => {
+    client.send(JSON.stringify({
+      type: "typing-status",
+      users: usersTyping
+    }));
+  });
+}
