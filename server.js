@@ -4,7 +4,6 @@ const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
 /*
- Estrutura:
  rooms = {
    roomId: Set<WebSocket>
  }
@@ -19,6 +18,42 @@ const typingUsers = {};
 
 console.log("🟢 Chat WebSocket rodando na porta", PORT);
 
+/* ===== HIERARQUIA ===== */
+const HIERARCHY = [
+  "Staff",
+  "Narrador",
+  "Professor",
+  "Ministerio",
+  "StMungus",
+  "Sociedade",
+  "Monitor",
+  "Aluno",
+  "Visitante"
+];
+
+function resolveHighestRole(tags = []) {
+  for (const role of HIERARCHY) {
+    if (tags.includes(role)) return role;
+  }
+  return "Visitante";
+}
+
+function getEmoji(role, gender) {
+  const g = (gender || "").toLowerCase();
+
+  switch (role) {
+    case "Staff": return "👑";
+    case "Narrador": return "🧙";
+    case "Professor": return g === "feminino" ? "👩‍🏫" : "👨‍🏫";
+    case "Ministerio": return "⚖️";
+    case "StMungus": return "🏥";
+    case "Sociedade": return g === "feminino" ? "👩🏻" : "👦🏻";
+    case "Monitor": return "⭐";
+    case "Aluno": return g === "feminino" ? "👩‍🎓" : "👨‍🎓";
+    default: return "👤";
+  }
+}
+
 wss.on("connection", (ws) => {
 
   ws.on("message", (message) => {
@@ -26,16 +61,24 @@ wss.on("connection", (ws) => {
 
     try {
       data = JSON.parse(message);
-    } catch (err) {
+    } catch {
       return;
     }
 
-    /* =========================
-       JOIN (ENTRAR NA SALA)
-    ========================= */
+    /* ===== JOIN ===== */
     if (data.type === "join") {
       ws.roomId = data.roomId;
-      ws.user = data.user;
+
+      const rawUser = data.user || {};
+      const role = resolveHighestRole(rawUser.tags || []);
+      const emoji = getEmoji(role, rawUser.gender);
+
+      ws.user = {
+        id: rawUser.id,
+        name: rawUser.name || "Sem nome",
+        role,
+        emoji
+      };
 
       if (!rooms[ws.roomId]) {
         rooms[ws.roomId] = new Set();
@@ -43,39 +86,32 @@ wss.on("connection", (ws) => {
 
       rooms[ws.roomId].add(ws);
 
-      // envia lista de online
       sendOnlineList(ws.roomId);
-
       return;
     }
 
-    /* =========================
-       MENSAGEM
-    ========================= */
+    /* ===== MESSAGE ===== */
     if (data.type === "message") {
       const room = ws.roomId;
       if (!room || !rooms[room]) return;
 
-      // remove status digitando
       typingUsers[room]?.delete(ws.user.id);
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
           type: "message",
-          user: ws.user,
+          user: {
+            name: `${ws.user.emoji} ${ws.user.name}`
+          },
           text: data.text
         }));
       });
 
-      // atualiza digitando
       broadcastTyping(room);
-
       return;
     }
 
-    /* =========================
-       DIGITANDO
-    ========================= */
+    /* ===== TYPING ===== */
     if (data.type === "typing") {
       const room = ws.roomId;
       if (!room || !ws.user) return;
@@ -94,19 +130,14 @@ wss.on("connection", (ws) => {
     }
   });
 
-  /* =========================
-     SAIR / DESCONECTAR
-  ========================= */
+  /* ===== CLOSE ===== */
   ws.on("close", () => {
     const room = ws.roomId;
     if (!room || !rooms[room]) return;
 
     rooms[room].delete(ws);
-
-    // remove digitando
     typingUsers[room]?.delete(ws.user?.id);
 
-    // limpa sala vazia
     if (rooms[room].size === 0) {
       delete rooms[room];
       delete typingUsers[room];
@@ -117,12 +148,13 @@ wss.on("connection", (ws) => {
   });
 });
 
-/* =========================
-   FUNÇÕES AUXILIARES
-========================= */
+/* ===== HELPERS ===== */
 
 function sendOnlineList(roomId) {
-  const users = Array.from(rooms[roomId]).map(ws => ws.user);
+  const users = Array.from(rooms[roomId]).map(ws => ({
+    name: `${ws.user.emoji} ${ws.user.name}`,
+    role: ws.user.role
+  }));
 
   rooms[roomId].forEach(client => {
     client.send(JSON.stringify({
@@ -149,3 +181,4 @@ function broadcastTyping(roomId) {
     }));
   });
 }
+
