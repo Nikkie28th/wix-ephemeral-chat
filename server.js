@@ -12,7 +12,6 @@ console.log("🟢 Chat WebSocket rodando na porta", PORT);
    CONEXÃO
 ========================= */
 wss.on("connection", (ws) => {
-
   ws.isAlive = true;
 
   ws.on("pong", () => {
@@ -28,14 +27,14 @@ wss.on("connection", (ws) => {
     }
 
     /* ===== KEEPALIVE ===== */
-    if (data.type === "keepalive") return;
+    if (data.type === "keepalive") {
+      return;
+    }
 
     /* ===== JOIN ===== */
     if (data.type === "join") {
       ws.roomId = data.roomId;
       ws.user = data.user;
-
-      if (!ws.roomId || !ws.user?.id) return;
 
       if (!rooms[ws.roomId]) {
         rooms[ws.roomId] = new Set();
@@ -43,8 +42,10 @@ wss.on("connection", (ws) => {
 
       rooms[ws.roomId].add(ws);
 
-      // confirma join APENAS para quem entrou
-      ws.send(JSON.stringify({ type: "joined" }));
+      // ✅ CONFIRMA JOIN
+      ws.send(JSON.stringify({
+        type: "join-ok"
+      }));
 
       sendOnlineList(ws.roomId);
       return;
@@ -54,9 +55,6 @@ wss.on("connection", (ws) => {
     if (data.type === "message") {
       const room = ws.roomId;
       if (!room || !rooms[room]) return;
-
-      typingUsers[room]?.delete(ws.user.id);
-      broadcastTyping(room);
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
@@ -71,29 +69,26 @@ wss.on("connection", (ws) => {
     /* ===== TYPING ===== */
     if (data.type === "typing") {
       const room = ws.roomId;
-      if (!room || !ws.user) return;
+      if (!room) return;
 
-      if (!typingUsers[room]) {
-        typingUsers[room] = new Set();
-      }
+      if (!typingUsers[room]) typingUsers[room] = new Set();
 
       if (data.typing) {
-        typingUsers[room].add(ws.user.id);
+        typingUsers[room].add(ws.user.name);
       } else {
-        typingUsers[room].delete(ws.user.id);
+        typingUsers[room].delete(ws.user.name);
       }
 
       broadcastTyping(room);
     }
   });
 
-  /* ===== CLOSE ===== */
   ws.on("close", () => {
     const room = ws.roomId;
     if (!room || !rooms[room]) return;
 
     rooms[room].delete(ws);
-    typingUsers[room]?.delete(ws.user?.id);
+    typingUsers[room]?.delete(ws.user?.name);
 
     if (rooms[room].size === 0) {
       delete rooms[room];
@@ -120,12 +115,7 @@ setInterval(() => {
    HELPERS
 ========================= */
 function sendOnlineList(roomId) {
-  const users = Array.from(rooms[roomId]).map(ws => ({
-    id: ws.user.id,
-    name: ws.user.name,
-    role: ws.user.role,
-    emoji: ws.user.emoji
-  }));
+  const users = Array.from(rooms[roomId]).map(ws => ws.user);
 
   rooms[roomId].forEach(client => {
     client.send(JSON.stringify({
@@ -138,23 +128,16 @@ function sendOnlineList(roomId) {
 function broadcastTyping(roomId) {
   if (!typingUsers[roomId] || !rooms[roomId]) return;
 
-  const usersTyping = Array.from(typingUsers[roomId])
-    .map(id => {
-      const ws = [...rooms[roomId]].find(c => c.user?.id === id);
-      return ws ? { id: ws.user.id, name: ws.user.name } : null;
-    })
-    .filter(Boolean);
-
   rooms[roomId].forEach(client => {
-    const others = usersTyping.filter(
-      u => u.id !== client.user.id
-    );
+    const othersTyping = Array.from(typingUsers[roomId])
+      .filter(name => name !== client.user.name);
 
     client.send(JSON.stringify({
       type: "typing-status",
-      users: others
+      users: othersTyping
     }));
   });
 }
+
 
 
