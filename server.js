@@ -3,6 +3,15 @@ const WebSocket = require("ws");
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
+/*
+ rooms = {
+   roomId: Set<WebSocket>
+ }
+
+ typingUsers = {
+   roomId: Set<userId>
+ }
+*/
 const rooms = {};
 const typingUsers = {};
 
@@ -27,7 +36,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /* ===== KEEPALIVE ===== */
+    /* ===== KEEPALIVE (CLIENTE) ===== */
     if (data.type === "keepalive") {
       return;
     }
@@ -37,11 +46,19 @@ wss.on("connection", (ws) => {
       ws.roomId = data.roomId;
       ws.user = data.user;
 
+      if (!ws.roomId || !ws.user?.id) return;
+
       if (!rooms[ws.roomId]) {
         rooms[ws.roomId] = new Set();
       }
 
       rooms[ws.roomId].add(ws);
+
+      // confirma o join APENAS para quem entrou
+      ws.send(JSON.stringify({
+        type: "joined"
+      }));
+
       sendOnlineList(ws.roomId);
       return;
     }
@@ -49,7 +66,11 @@ wss.on("connection", (ws) => {
     /* ===== MESSAGE ===== */
     if (data.type === "message") {
       const room = ws.roomId;
-      if (!room || !rooms[room]) return;
+      if (!room || !rooms[room] || !ws.user) return;
+
+      // remove do typing ao enviar mensagem
+      typingUsers[room]?.delete(ws.user.id);
+      broadcastTyping(room);
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
@@ -64,47 +85,67 @@ wss.on("connection", (ws) => {
     /* ===== TYPING ===== */
     if (data.type === "typing") {
       const room = ws.roomId;
-      if (!room) return;
+      if (!room || !ws.user) return;
 
-      if (!typingUsers[room]) typingUsers[room] = new Set();
+      if (!typingUsers[room]) {
+        typingUsers[room] = new Set();
+      }
 
-      if (data.typing) typingUsers[room].add(ws.user.name);
-      else typingUsers[room].delete(ws.user.name);
+      if (data.typing) {
+        typingUsers[room].add(ws.user.id);
+      } else {
+        typingUsers[room].delete(ws.user.id);
+      }
 
       broadcastTyping(room);
     }
   });
 
+  /* ===== CLOSE ===== */
   ws.on("close", () => {
     const room = ws.roomId;
-    if (room && rooms[room]) {
-      rooms[room].delete(ws);
-      if (rooms[room].size === 0) {
-        delete rooms[room];
-        delete typingUsers[room];
-      } else {
-        sendOnlineList(room);
-      }
+    if (!room || !rooms[room]) return;
+
+    rooms[room].delete(ws);
+    typingUsers[room]?.delete(ws.user?.id);
+
+    if (rooms[room].size === 0) {
+      delete rooms[room];
+      delete typingUsers[room];
+    } else {
+      sendOnlineList(room);
+      broadcastTyping(room);
     }
   });
 });
 
 /* =========================
    PING GLOBAL (SERVIDOR)
+   mantém conexão viva por horas
 ========================= */
 setInterval(() => {
   wss.clients.forEach(ws => {
-    if (!ws.isAlive) return ws.terminate();
+    if (!ws.isAlive) {
+      return ws.terminate();
+    }
     ws.isAlive = false;
     ws.ping();
   });
-}, 30000);
+}, 30000); // 30s
 
 /* =========================
    HELPERS
 ========================= */
+
 function sendOnlineList(roomId) {
-  const users = Array.from(rooms[roomId]).map(ws => ws.user);
+  if (!rooms[roomId]) return;
+
+  const users = Array.from(rooms[roomId]).map(ws => ({
+    id: ws.user.id,
+    name: ws.user.name,
+    role: ws.user.role,
+    emoji: ws.user.emoji
+  }));
 
   rooms[roomId].forEach(client => {
     client.send(JSON.stringify({
@@ -117,10 +158,22 @@ function sendOnlineList(roomId) {
 function broadcastTyping(roomId) {
   if (!typingUsers[roomId] || !rooms[roomId]) return;
 
+  const usersTyping = Array.from(typingUsers[roomId])
+    .map(id => {
+      const ws = [...rooms[roomId]].find(c => c.user?.id === id);
+      if (!ws) return null;
+      return {
+        id: ws.user.id,
+        name: ws.user.name
+      };
+    })
+    .filter(Boolean);
+
   rooms[roomId].forEach(client => {
     // remove o próprio usuário da lista
-    const othersTyping = Array.from(typingUsers[roomId])
-      .filter(name => name !== client.user.name);
+    const othersTyping = usersTyping.filter(
+      u => u.id !== client.user.id
+    );
 
     client.send(JSON.stringify({
       type: "typing-status",
@@ -128,6 +181,5 @@ function broadcastTyping(roomId) {
     }));
   });
 }
-
 
 
