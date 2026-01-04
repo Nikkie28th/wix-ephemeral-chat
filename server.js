@@ -3,15 +3,6 @@ const WebSocket = require("ws");
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-/*
- rooms = {
-   roomId: Set<WebSocket>
- }
-
- typingUsers = {
-   roomId: Set<userId>
- }
-*/
 const rooms = {};
 const typingUsers = {};
 
@@ -36,10 +27,8 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /* ===== KEEPALIVE (CLIENTE) ===== */
-    if (data.type === "keepalive") {
-      return;
-    }
+    /* ===== KEEPALIVE ===== */
+    if (data.type === "keepalive") return;
 
     /* ===== JOIN ===== */
     if (data.type === "join") {
@@ -54,10 +43,8 @@ wss.on("connection", (ws) => {
 
       rooms[ws.roomId].add(ws);
 
-      // confirma o join APENAS para quem entrou
-      ws.send(JSON.stringify({
-        type: "joined"
-      }));
+      // confirma join APENAS para quem entrou
+      ws.send(JSON.stringify({ type: "joined" }));
 
       sendOnlineList(ws.roomId);
       return;
@@ -66,9 +53,8 @@ wss.on("connection", (ws) => {
     /* ===== MESSAGE ===== */
     if (data.type === "message") {
       const room = ws.roomId;
-      if (!room || !rooms[room] || !ws.user) return;
+      if (!room || !rooms[room]) return;
 
-      // remove do typing ao enviar mensagem
       typingUsers[room]?.delete(ws.user.id);
       broadcastTyping(room);
 
@@ -120,26 +106,20 @@ wss.on("connection", (ws) => {
 });
 
 /* =========================
-   PING GLOBAL (SERVIDOR)
-   mantém conexão viva por horas
+   PING GLOBAL
 ========================= */
 setInterval(() => {
   wss.clients.forEach(ws => {
-    if (!ws.isAlive) {
-      return ws.terminate();
-    }
+    if (!ws.isAlive) return ws.terminate();
     ws.isAlive = false;
     ws.ping();
   });
-}, 30000); // 30s
+}, 30000);
 
 /* =========================
    HELPERS
 ========================= */
-
 function sendOnlineList(roomId) {
-  if (!rooms[roomId]) return;
-
   const users = Array.from(rooms[roomId]).map(ws => ({
     id: ws.user.id,
     name: ws.user.name,
@@ -161,23 +141,18 @@ function broadcastTyping(roomId) {
   const usersTyping = Array.from(typingUsers[roomId])
     .map(id => {
       const ws = [...rooms[roomId]].find(c => c.user?.id === id);
-      if (!ws) return null;
-      return {
-        id: ws.user.id,
-        name: ws.user.name
-      };
+      return ws ? { id: ws.user.id, name: ws.user.name } : null;
     })
     .filter(Boolean);
 
   rooms[roomId].forEach(client => {
-    // remove o próprio usuário da lista
-    const othersTyping = usersTyping.filter(
+    const others = usersTyping.filter(
       u => u.id !== client.user.id
     );
 
     client.send(JSON.stringify({
       type: "typing-status",
-      users: othersTyping
+      users: others
     }));
   });
 }
