@@ -8,28 +8,23 @@ const typingUsers = {};
 
 console.log("🟢 Chat WebSocket rodando na porta", PORT);
 
-/* =========================
-   CONEXÃO
-========================= */
 wss.on("connection", (ws) => {
+
   ws.isAlive = true;
 
   ws.on("pong", () => {
     ws.isAlive = true;
   });
 
-  ws.on("message", (message) => {
+  ws.on("message", (msg) => {
     let data;
     try {
-      data = JSON.parse(message);
+      data = JSON.parse(msg);
     } catch {
       return;
     }
 
-    /* ===== KEEPALIVE ===== */
-    if (data.type === "keepalive") {
-      return;
-    }
+    if (data.type === "keepalive") return;
 
     /* ===== JOIN ===== */
     if (data.type === "join") {
@@ -42,11 +37,7 @@ wss.on("connection", (ws) => {
 
       rooms[ws.roomId].add(ws);
 
-      // ✅ CONFIRMA JOIN
-      ws.send(JSON.stringify({
-        type: "join-ok"
-      }));
-
+      ws.send(JSON.stringify({ type: "joined" }));
       sendOnlineList(ws.roomId);
       return;
     }
@@ -54,7 +45,7 @@ wss.on("connection", (ws) => {
     /* ===== MESSAGE ===== */
     if (data.type === "message") {
       const room = ws.roomId;
-      if (!room || !rooms[room]) return;
+      if (!room) return;
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
@@ -73,11 +64,8 @@ wss.on("connection", (ws) => {
 
       if (!typingUsers[room]) typingUsers[room] = new Set();
 
-      if (data.typing) {
-        typingUsers[room].add(ws.user.name);
-      } else {
-        typingUsers[room].delete(ws.user.name);
-      }
+      if (data.typing) typingUsers[room].add(ws.user.name);
+      else typingUsers[room].delete(ws.user.name);
 
       broadcastTyping(room);
     }
@@ -100,9 +88,7 @@ wss.on("connection", (ws) => {
   });
 });
 
-/* =========================
-   PING GLOBAL
-========================= */
+/* ===== PING ===== */
 setInterval(() => {
   wss.clients.forEach(ws => {
     if (!ws.isAlive) return ws.terminate();
@@ -111,9 +97,7 @@ setInterval(() => {
   });
 }, 30000);
 
-/* =========================
-   HELPERS
-========================= */
+/* ===== HELPERS ===== */
 function sendOnlineList(roomId) {
   const users = Array.from(rooms[roomId]).map(ws => ws.user);
 
@@ -126,18 +110,16 @@ function sendOnlineList(roomId) {
 }
 
 function broadcastTyping(roomId) {
-  if (!typingUsers[roomId] || !rooms[roomId]) return;
+  if (!typingUsers[roomId]) return;
 
   rooms[roomId].forEach(client => {
-    const othersTyping = Array.from(typingUsers[roomId])
+    const others = Array.from(typingUsers[roomId])
       .filter(name => name !== client.user.name);
 
     client.send(JSON.stringify({
       type: "typing-status",
-      users: othersTyping
+      users: others
     }));
   });
 }
-
-
 
