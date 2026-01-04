@@ -4,13 +4,13 @@ const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
 /*
- rooms = {
-   roomId: Set<WebSocket>
- }
+rooms = {
+  roomId: Set<WebSocket>
+}
 
- typingUsers = {
-   roomId: Set<userId>
- }
+typingUsers = {
+  roomId: Set<userId>
+}
 */
 
 const rooms = {};
@@ -18,7 +18,9 @@ const typingUsers = {};
 
 console.log("🟢 Chat WebSocket rodando na porta", PORT);
 
-/* ===== HIERARQUIA ===== */
+/* =========================
+   HIERARQUIA DE CARGOS
+========================= */
 const HIERARCHY = [
   "Staff",
   "Narrador",
@@ -31,9 +33,9 @@ const HIERARCHY = [
   "Visitante"
 ];
 
-function resolveHighestRole(tags = []) {
+function resolveHighestRole(cargos = []) {
   for (const role of HIERARCHY) {
-    if (tags.includes(role)) return role;
+    if (cargos.includes(role)) return role;
   }
   return "Visitante";
 }
@@ -54,24 +56,30 @@ function getEmoji(role, gender) {
   }
 }
 
+/* =========================
+   CONEXÃO
+========================= */
 wss.on("connection", (ws) => {
 
   ws.on("message", (message) => {
     let data;
-
     try {
       data = JSON.parse(message);
     } catch {
       return;
     }
 
-    /* ===== JOIN ===== */
+    /* =====================
+       JOIN (ENTRADA)
+    ===================== */
     if (data.type === "join") {
       ws.roomId = data.roomId;
 
       const rawUser = data.user || {};
-      const role = resolveHighestRole(rawUser.tags || []);
-      const emoji = getEmoji(role, rawUser.gender);
+
+      // 🔒 NORMALIZA USUÁRIO
+      const role = rawUser.role || "Visitante";
+      const emoji = rawUser.emoji || "👤";
 
       ws.user = {
         id: rawUser.id,
@@ -90,10 +98,12 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /* ===== MESSAGE ===== */
+    /* =====================
+       MESSAGE
+    ===================== */
     if (data.type === "message") {
       const room = ws.roomId;
-      if (!room || !rooms[room]) return;
+      if (!room || !rooms[room] || !ws.user) return;
 
       typingUsers[room]?.delete(ws.user.id);
 
@@ -101,7 +111,10 @@ wss.on("connection", (ws) => {
         client.send(JSON.stringify({
           type: "message",
           user: {
-            name: `${ws.user.emoji} ${ws.user.name}`
+            id: ws.user.id,
+            name: ws.user.name,
+            role: ws.user.role,
+            emoji: ws.user.emoji
           },
           text: data.text
         }));
@@ -111,7 +124,9 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /* ===== TYPING ===== */
+    /* =====================
+       TYPING
+    ===================== */
     if (data.type === "typing") {
       const room = ws.roomId;
       if (!room || !ws.user) return;
@@ -130,7 +145,9 @@ wss.on("connection", (ws) => {
     }
   });
 
-  /* ===== CLOSE ===== */
+  /* =====================
+     CLOSE
+  ===================== */
   ws.on("close", () => {
     const room = ws.roomId;
     if (!room || !rooms[room]) return;
@@ -148,12 +165,17 @@ wss.on("connection", (ws) => {
   });
 });
 
-/* ===== HELPERS ===== */
-
+/* =========================
+   HELPERS
+========================= */
 function sendOnlineList(roomId) {
+  if (!rooms[roomId]) return;
+
   const users = Array.from(rooms[roomId]).map(ws => ({
-    name: `${ws.user.emoji} ${ws.user.name}`,
-    role: ws.user.role
+    id: ws.user.id,
+    name: ws.user.name,
+    role: ws.user.role,
+    emoji: ws.user.emoji
   }));
 
   rooms[roomId].forEach(client => {
@@ -165,7 +187,7 @@ function sendOnlineList(roomId) {
 }
 
 function broadcastTyping(roomId) {
-  if (!typingUsers[roomId]) return;
+  if (!typingUsers[roomId] || !rooms[roomId]) return;
 
   const usersTyping = Array.from(typingUsers[roomId])
     .map(id => {
@@ -181,4 +203,5 @@ function broadcastTyping(roomId) {
     }));
   });
 }
+
 
