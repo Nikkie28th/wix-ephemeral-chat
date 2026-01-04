@@ -9,7 +9,6 @@ const typingUsers = {};
 console.log("🟢 Chat WebSocket rodando na porta", PORT);
 
 wss.on("connection", (ws) => {
-
   ws.isAlive = true;
 
   ws.on("pong", () => {
@@ -31,10 +30,7 @@ wss.on("connection", (ws) => {
       ws.roomId = data.roomId;
       ws.user = data.user;
 
-      if (!rooms[ws.roomId]) {
-        rooms[ws.roomId] = new Set();
-      }
-
+      if (!rooms[ws.roomId]) rooms[ws.roomId] = new Set();
       rooms[ws.roomId].add(ws);
 
       ws.send(JSON.stringify({ type: "joined" }));
@@ -45,7 +41,10 @@ wss.on("connection", (ws) => {
     /* ===== MESSAGE ===== */
     if (data.type === "message") {
       const room = ws.roomId;
-      if (!room) return;
+      if (!room || !rooms[room]) return;
+
+      typingUsers[room]?.delete(ws.user.name);
+      broadcastTyping(room);
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
@@ -88,7 +87,7 @@ wss.on("connection", (ws) => {
   });
 });
 
-/* ===== PING ===== */
+/* ===== PING GLOBAL ===== */
 setInterval(() => {
   wss.clients.forEach(ws => {
     if (!ws.isAlive) return ws.terminate();
