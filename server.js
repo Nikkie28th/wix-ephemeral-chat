@@ -6,26 +6,23 @@ const wss = new WebSocket.Server({ port: PORT });
 const rooms = {};
 const typingUsers = {};
 
-console.log("🟢 Chat WebSocket rodando na porta", PORT);
+console.log("🟢 WebSocket rodando na porta", PORT);
 
-wss.on("connection", (ws) => {
+wss.on("connection", ws => {
+
   ws.isAlive = true;
 
   ws.on("pong", () => {
     ws.isAlive = true;
   });
 
-  ws.on("message", (msg) => {
+  ws.on("message", message => {
     let data;
-    try {
-      data = JSON.parse(msg);
-    } catch {
-      return;
-    }
+    try { data = JSON.parse(message); }
+    catch { return; }
 
     if (data.type === "keepalive") return;
 
-    /* ===== JOIN ===== */
     if (data.type === "join") {
       ws.roomId = data.roomId;
       ws.user = data.user;
@@ -33,18 +30,15 @@ wss.on("connection", (ws) => {
       if (!rooms[ws.roomId]) rooms[ws.roomId] = new Set();
       rooms[ws.roomId].add(ws);
 
-      ws.send(JSON.stringify({ type: "joined" }));
       sendOnlineList(ws.roomId);
       return;
     }
 
-    /* ===== MESSAGE ===== */
     if (data.type === "message") {
       const room = ws.roomId;
       if (!room || !rooms[room]) return;
 
       typingUsers[room]?.delete(ws.user.name);
-      broadcastTyping(room);
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
@@ -53,10 +47,11 @@ wss.on("connection", (ws) => {
           text: data.text
         }));
       });
+
+      broadcastTyping(room);
       return;
     }
 
-    /* ===== TYPING ===== */
     if (data.type === "typing") {
       const room = ws.roomId;
       if (!room) return;
@@ -87,7 +82,6 @@ wss.on("connection", (ws) => {
   });
 });
 
-/* ===== PING GLOBAL ===== */
 setInterval(() => {
   wss.clients.forEach(ws => {
     if (!ws.isAlive) return ws.terminate();
@@ -96,7 +90,6 @@ setInterval(() => {
   });
 }, 30000);
 
-/* ===== HELPERS ===== */
 function sendOnlineList(roomId) {
   const users = Array.from(rooms[roomId]).map(ws => ws.user);
 
@@ -121,4 +114,5 @@ function broadcastTyping(roomId) {
     }));
   });
 }
+
 
