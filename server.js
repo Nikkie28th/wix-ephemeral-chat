@@ -19,47 +19,30 @@ const typingUsers = {};
 console.log("🟢 Chat WebSocket rodando na porta", PORT);
 
 /* =========================
-   HIERARQUIA DE CARGOS
+   HEARTBEAT (ANTI TIMEOUT)
 ========================= */
-const HIERARCHY = [
-  "Staff",
-  "Narrador",
-  "Professor",
-  "Ministerio",
-  "StMungus",
-  "Sociedade",
-  "Monitor",
-  "Aluno",
-  "Visitante"
-];
+const HEARTBEAT_INTERVAL = 1000 * 60 * 5; // 5 minutos
 
-function resolveHighestRole(cargos = []) {
-  for (const role of HIERARCHY) {
-    if (cargos.includes(role)) return role;
-  }
-  return "Visitante";
-}
-
-function getEmoji(role, gender) {
-  const g = (gender || "").toLowerCase();
-
-  switch (role) {
-    case "Staff": return "👑";
-    case "Narrador": return "🧙";
-    case "Professor": return g === "feminino" ? "👩‍🏫" : "👨‍🏫";
-    case "Ministerio": return "⚖️";
-    case "StMungus": return "🏥";
-    case "Sociedade": return g === "feminino" ? "👩🏻" : "👦🏻";
-    case "Monitor": return "⭐";
-    case "Aluno": return g === "feminino" ? "👩‍🎓" : "👨‍🎓";
-    default: return "👤";
-  }
-}
+setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (ws.isAlive === false) {
+      return ws.terminate();
+    }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, HEARTBEAT_INTERVAL);
 
 /* =========================
    CONEXÃO
 ========================= */
 wss.on("connection", (ws) => {
+
+  ws.isAlive = true;
+
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
 
   ws.on("message", (message) => {
     let data;
@@ -69,23 +52,22 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /* =====================
-       JOIN (ENTRADA)
-    ===================== */
+    /* ===== KEEPALIVE CLIENTE ===== */
+    if (data.type === "keepalive") {
+      return;
+    }
+
+    /* ===== JOIN ===== */
     if (data.type === "join") {
       ws.roomId = data.roomId;
 
-      const rawUser = data.user || {};
-
-      // 🔒 NORMALIZA USUÁRIO
-      const role = rawUser.role || "Visitante";
-      const emoji = rawUser.emoji || "👤";
+      const u = data.user || {};
 
       ws.user = {
-        id: rawUser.id,
-        name: rawUser.name || "Sem nome",
-        role,
-        emoji
+        id: u.id,
+        name: u.name || "Sem nome",
+        role: u.role || "Visitante",
+        emoji: u.emoji || "👤"
       };
 
       if (!rooms[ws.roomId]) {
@@ -93,14 +75,11 @@ wss.on("connection", (ws) => {
       }
 
       rooms[ws.roomId].add(ws);
-
       sendOnlineList(ws.roomId);
       return;
     }
 
-    /* =====================
-       MESSAGE
-    ===================== */
+    /* ===== MESSAGE ===== */
     if (data.type === "message") {
       const room = ws.roomId;
       if (!room || !rooms[room] || !ws.user) return;
@@ -110,12 +89,7 @@ wss.on("connection", (ws) => {
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
           type: "message",
-          user: {
-            id: ws.user.id,
-            name: ws.user.name,
-            role: ws.user.role,
-            emoji: ws.user.emoji
-          },
+          user: ws.user,
           text: data.text
         }));
       });
@@ -124,9 +98,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /* =====================
-       TYPING
-    ===================== */
+    /* ===== TYPING ===== */
     if (data.type === "typing") {
       const room = ws.roomId;
       if (!room || !ws.user) return;
@@ -145,9 +117,7 @@ wss.on("connection", (ws) => {
     }
   });
 
-  /* =====================
-     CLOSE
-  ===================== */
+  /* ===== CLOSE ===== */
   ws.on("close", () => {
     const room = ws.roomId;
     if (!room || !rooms[room]) return;
@@ -171,12 +141,7 @@ wss.on("connection", (ws) => {
 function sendOnlineList(roomId) {
   if (!rooms[roomId]) return;
 
-  const users = Array.from(rooms[roomId]).map(ws => ({
-    id: ws.user.id,
-    name: ws.user.name,
-    role: ws.user.role,
-    emoji: ws.user.emoji
-  }));
+  const users = Array.from(rooms[roomId]).map(ws => ws.user);
 
   rooms[roomId].forEach(client => {
     client.send(JSON.stringify({
