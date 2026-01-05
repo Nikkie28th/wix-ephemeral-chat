@@ -23,9 +23,12 @@ wss.on("connection", ws => {
 
     if (data.type === "keepalive") return;
 
+    // =========================
+    // JOIN
+    // =========================
     if (data.type === "join") {
       ws.roomId = data.roomId;
-      ws.user = data.user;
+      ws.user = data.user; // guarda user inicial
 
       if (!rooms[ws.roomId]) rooms[ws.roomId] = new Set();
       rooms[ws.roomId].add(ws);
@@ -34,16 +37,24 @@ wss.on("connection", ws => {
       return;
     }
 
+    // =========================
+    // MESSAGE
+    // =========================
     if (data.type === "message") {
       const room = ws.roomId;
       if (!room || !rooms[room]) return;
+
+      // 🔥 ATUALIZA USER SE VIER NOVO (avatar, nome etc)
+      if (data.user) {
+        ws.user = data.user;
+      }
 
       typingUsers[room]?.delete(ws.user.name);
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
           type: "message",
-          user: ws.user,
+          user: ws.user, // agora sempre atualizado
           text: data.text
         }));
       });
@@ -52,6 +63,9 @@ wss.on("connection", ws => {
       return;
     }
 
+    // =========================
+    // TYPING
+    // =========================
     if (data.type === "typing") {
       const room = ws.roomId;
       if (!room) return;
@@ -82,6 +96,9 @@ wss.on("connection", ws => {
   });
 });
 
+// =========================
+// KEEP ALIVE
+// =========================
 setInterval(() => {
   wss.clients.forEach(ws => {
     if (!ws.isAlive) return ws.terminate();
@@ -90,6 +107,9 @@ setInterval(() => {
   });
 }, 30000);
 
+// =========================
+// ONLINE LIST
+// =========================
 function sendOnlineList(roomId) {
   const users = Array.from(rooms[roomId]).map(ws => ws.user);
 
@@ -101,6 +121,9 @@ function sendOnlineList(roomId) {
   });
 }
 
+// =========================
+// TYPING STATUS
+// =========================
 function broadcastTyping(roomId) {
   if (!typingUsers[roomId]) return;
 
@@ -114,5 +137,4 @@ function broadcastTyping(roomId) {
     }));
   });
 }
-
 
