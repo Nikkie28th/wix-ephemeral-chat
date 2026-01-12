@@ -51,11 +51,14 @@ wss.on("connection", ws => {
       }
 
       rooms[room].forEach(client => {
-        client.send(JSON.stringify({
-          type: "message",
-          user: ws.user,
-          text: data.text
-        }));
+       client.send(JSON.stringify({
+        type: "private-message",
+        from: ws.user.name,
+        to,
+        user: ws.user,
+        text
+      }));
+
       });
 
       return;
