@@ -23,12 +23,12 @@ wss.on("connection", ws => {
 
     if (data.type === "keepalive") return;
 
-    // =========================
-    // JOIN
-    // =========================
+    /* =========================
+       JOIN
+    ========================= */
     if (data.type === "join") {
       ws.roomId = data.roomId;
-      ws.user = data.user; // guarda user inicial
+      ws.user = data.user;
 
       if (!rooms[ws.roomId]) rooms[ws.roomId] = new Set();
       rooms[ws.roomId].add(ws);
@@ -37,35 +37,58 @@ wss.on("connection", ws => {
       return;
     }
 
-    // =========================
-    // MESSAGE
-    // =========================
+    /* =========================
+       MENSAGEM GERAL
+    ========================= */
     if (data.type === "message") {
       const room = ws.roomId;
       if (!room || !rooms[room]) return;
 
-      // 🔥 ATUALIZA USER SE VIER NOVO (avatar, nome etc)
-      if (data.user) {
-        ws.user = data.user;
-      }
-
-      typingUsers[room]?.delete(ws.user.name);
+      if (data.user) ws.user = data.user;
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
           type: "message",
-          user: ws.user, // agora sempre atualizado
+          scope: "geral",
+          user: ws.user,
           text: data.text
         }));
       });
 
-      broadcastTyping(room);
       return;
     }
 
-    // =========================
-    // TYPING
-    // =========================
+    /* =========================
+       🔥 MENSAGEM PRIVADA
+    ========================= */
+    if (data.type === "private-message") {
+      const room = ws.roomId;
+      if (!room || !rooms[room]) return;
+
+      const from = data.from;
+      const to = data.to;
+
+      rooms[room].forEach(client => {
+        if (
+          client.user?.name === to ||
+          client.user?.name === from
+        ) {
+          client.send(JSON.stringify({
+            type: "private-message",
+            from,
+            to,
+            user: ws.user,
+            text: data.text
+          }));
+        }
+      });
+
+      return;
+    }
+
+    /* =========================
+       TYPING
+    ========================= */
     if (data.type === "typing") {
       const room = ws.roomId;
       if (!room) return;
@@ -96,9 +119,9 @@ wss.on("connection", ws => {
   });
 });
 
-// =========================
-// KEEP ALIVE
-// =========================
+/* =========================
+   KEEP ALIVE
+========================= */
 setInterval(() => {
   wss.clients.forEach(ws => {
     if (!ws.isAlive) return ws.terminate();
@@ -107,9 +130,9 @@ setInterval(() => {
   });
 }, 30000);
 
-// =========================
-// ONLINE LIST
-// =========================
+/* =========================
+   ONLINE LIST
+========================= */
 function sendOnlineList(roomId) {
   const users = Array.from(rooms[roomId]).map(ws => ws.user);
 
@@ -121,9 +144,9 @@ function sendOnlineList(roomId) {
   });
 }
 
-// =========================
-// TYPING STATUS
-// =========================
+/* =========================
+   TYPING STATUS
+========================= */
 function broadcastTyping(roomId) {
   if (!typingUsers[roomId]) return;
 
