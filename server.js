@@ -3,8 +3,40 @@ const WebSocket = require("ws");
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
+/* =========================
+   ESTRUTURAS
+========================= */
+
+// roomId -> Set<ws>
 const rooms = {};
-const typingUsers = {};
+
+// name -> { ws, roomId }
+const presence = new Map();
+
+// MOCK de amizades (substituir por DB depois)
+// name -> Set<name>
+const friendships = new Map();
+
+/* =========================
+   HELPERS
+========================= */
+
+function ensureFriendSet(name) {
+  if (!friendships.has(name)) {
+    friendships.set(name, new Set());
+  }
+}
+
+function isMutualFriend(a, b) {
+  return (
+    friendships.get(a)?.has(b) &&
+    friendships.get(b)?.has(a)
+  );
+}
+
+/* =========================
+   SERVER
+========================= */
 
 console.log("🟢 WebSocket rodando na porta", PORT);
 
@@ -31,7 +63,7 @@ wss.on("connection", ws => {
        JOIN
     ========================= */
     if (data.type === "join") {
-      if (!data.roomId || !data.user) return;
+      if (!data.roomId || !data.user?.name) return;
 
       ws.roomId = data.roomId;
       ws.user = data.user;
@@ -39,7 +71,29 @@ wss.on("connection", ws => {
       if (!rooms[ws.roomId]) rooms[ws.roomId] = new Set();
       rooms[ws.roomId].add(ws);
 
+      ensureFriendSet(ws.user.name);
+
+      presence.set(ws.user.name, {
+        ws,
+        roomId: ws.roomId
+      });
+
       sendOnlineList(ws.roomId);
+      broadcastPresence();
+
+      return;
+    }
+
+    /* =========================
+       ADD FRIEND (opcional, futuro)
+    ========================= */
+    if (data.type === "add-friend") {
+      if (!ws.user?.name || !data.friend) return;
+
+      ensureFriendSet(ws.user.name);
+      friendships.get(ws.user.name).add(data.friend);
+
+      broadcastPresence();
       return;
     }
 
@@ -69,50 +123,53 @@ wss.on("connection", ws => {
        PRIVATE MESSAGE
     ========================= */
     if (data.type === "private-message") {
-      if (!ws.roomId || !ws.user) return;
-      if (!data.to || !data.text) return;
+      if (!ws.user || !data.to || !data.text) return;
 
-      const room = rooms[ws.roomId];
-      if (!room) return;
+      const target = presence.get(data.to);
+      const sender = ws.user.name;
 
-      room.forEach(client => {
-        if (!client.user) return;
+      // envia para quem está online
+      if (target) {
+        target.ws.send(JSON.stringify({
+          type: "private-message",
+          from: sender,
+          to: data.to,
+          user: ws.user,
+          text: data.text
+        }));
+      }
 
-        if (
-          client.user.name === data.to ||
-          client === ws
-        ) {
-          client.send(JSON.stringify({
-            type: "private-message",
-            from: ws.user.name,
-            to: data.to,
-            user: ws.user,
-            text: data.text
-          }));
-        }
-      });
+      // eco local para o remetente
+      ws.send(JSON.stringify({
+        type: "private-message",
+        from: sender,
+        to: data.to,
+        user: ws.user,
+        text: data.text
+      }));
 
       return;
     }
   });
 
   ws.on("close", () => {
+    const name = ws.user?.name;
     const roomId = ws.roomId;
-    if (!roomId || !rooms[roomId]) return;
 
-    rooms[roomId].delete(ws);
-
-    if (typingUsers[roomId] && ws.user?.name) {
-      typingUsers[roomId].delete(ws.user.name);
+    if (name) {
+      presence.delete(name);
     }
 
-    if (rooms[roomId].size === 0) {
-      delete rooms[roomId];
-      delete typingUsers[roomId];
-    } else {
-      sendOnlineList(roomId);
-      broadcastTyping(roomId);
+    if (roomId && rooms[roomId]) {
+      rooms[roomId].delete(ws);
+      if (rooms[roomId].size === 0) {
+        delete rooms[roomId];
+      } else {
+        sendOnlineList(roomId);
+      }
     }
+
+    broadcastPresence();
   });
 });
 
@@ -128,7 +185,7 @@ setInterval(() => {
 }, 30000);
 
 /* =========================
-   ONLINE LIST
+   ONLINE LIST (POR ROOM)
 ========================= */
 function sendOnlineList(roomId) {
   if (!rooms[roomId]) return;
@@ -146,21 +203,29 @@ function sendOnlineList(roomId) {
 }
 
 /* =========================
-   TYPING STATUS
+   PRESENÇA GLOBAL (COM PRIVACIDADE)
 ========================= */
-function broadcastTyping(roomId) {
-  if (!typingUsers[roomId] || !rooms[roomId]) return;
+function broadcastPresence() {
+  const allUsers = Array.from(presence.entries());
 
-  rooms[roomId].forEach(client => {
-    if (!client.user) return;
+  allUsers.forEach(([viewerName, viewerData]) => {
+    const payload = [];
 
-    const others = Array.from(typingUsers[roomId])
-      .filter(name => name !== client.user.name);
+    allUsers.forEach(([targetName, targetData]) => {
+      if (viewerName === targetName) return;
 
-    client.send(JSON.stringify({
-      type: "typing-status",
-      users: others
+      const mutual = isMutualFriend(viewerName, targetName);
+
+      payload.push({
+        name: targetName,
+        room: mutual ? targetData.roomId : null,
+        canSeeRoom: mutual
+      });
+    });
+
+    viewerData.ws.send(JSON.stringify({
+      type: "presence",
+      users: payload
     }));
   });
 }
-
