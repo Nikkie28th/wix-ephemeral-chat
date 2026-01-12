@@ -35,6 +35,40 @@ function isMutualFriend(a, b) {
 }
 
 /* =========================
+   PRESENCE HELPERS (NOVO)
+========================= */
+
+function sendPresenceTo(ws) {
+  if (!ws.user?.name) return;
+
+  const viewerName = ws.user.name;
+  const payload = [];
+
+  presence.forEach((targetData, targetName) => {
+    if (targetName === viewerName) return;
+
+    const mutual = isMutualFriend(viewerName, targetName);
+
+    payload.push({
+      name: targetName,
+      room: mutual ? targetData.roomId : null,
+      canSeeRoom: mutual
+    });
+  });
+
+  ws.send(JSON.stringify({
+    type: "presence",
+    users: payload
+  }));
+}
+
+function broadcastPresence() {
+  presence.forEach((viewerData) => {
+    sendPresenceTo(viewerData.ws);
+  });
+}
+
+/* =========================
    SERVER
 ========================= */
 
@@ -78,9 +112,23 @@ wss.on("connection", ws => {
         roomId: ws.roomId
       });
 
+      // 🔹 lista do room
       sendOnlineList(ws.roomId);
+
+      // 🔹 presença global imediata (NOVO)
+      sendPresenceTo(ws);
+
+      // 🔹 atualiza presença para os outros
       broadcastPresence();
 
+      return;
+    }
+
+    /* =========================
+       REQUEST PRESENCE (NOVO)
+    ========================= */
+    if (data.type === "request-presence") {
+      sendPresenceTo(ws);
       return;
     }
 
@@ -125,10 +173,10 @@ wss.on("connection", ws => {
     if (data.type === "private-message") {
       if (!ws.user || !data.to || !data.text) return;
 
-      const target = presence.get(data.to);
       const sender = ws.user.name;
+      const target = presence.get(data.to);
 
-      // envia para quem está online
+      // envia para o destinatário se online
       if (target) {
         target.ws.send(JSON.stringify({
           type: "private-message",
@@ -202,30 +250,3 @@ function sendOnlineList(roomId) {
   });
 }
 
-/* =========================
-   PRESENÇA GLOBAL (COM PRIVACIDADE)
-========================= */
-function broadcastPresence() {
-  const allUsers = Array.from(presence.entries());
-
-  allUsers.forEach(([viewerName, viewerData]) => {
-    const payload = [];
-
-    allUsers.forEach(([targetName, targetData]) => {
-      if (viewerName === targetName) return;
-
-      const mutual = isMutualFriend(viewerName, targetName);
-
-      payload.push({
-        name: targetName,
-        room: mutual ? targetData.roomId : null,
-        canSeeRoom: mutual
-      });
-    });
-
-    viewerData.ws.send(JSON.stringify({
-      type: "presence",
-      users: payload
-    }));
-  });
-}
