@@ -150,6 +150,15 @@ wss.on("connection", ws => {
       broadcastPresence();
       return;
     }
+     if (data.type === "remove-friend") {
+     if (!ws.user?.name || !data.friend) return;
+   
+     friendships.get(ws.user.name)?.delete(data.friend);
+   
+     broadcastPresence();
+     return;
+   }
+
 
     /* =========================
        PUBLIC MESSAGE
