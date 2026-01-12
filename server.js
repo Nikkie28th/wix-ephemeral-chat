@@ -26,6 +26,7 @@ wss.on("connection", ws => {
     /* =========================
        JOIN
     ========================= */
+
     if (data.type === "join") {
       ws.roomId = data.roomId;
       ws.user = data.user;
@@ -38,18 +39,20 @@ wss.on("connection", ws => {
     }
 
     /* =========================
-       MENSAGEM GERAL
+       PUBLIC MESSAGE (GERAL)
     ========================= */
+
     if (data.type === "message") {
       const room = ws.roomId;
       if (!room || !rooms[room]) return;
 
-      if (data.user) ws.user = data.user;
+      if (data.user) {
+        ws.user = data.user;
+      }
 
       rooms[room].forEach(client => {
         client.send(JSON.stringify({
           type: "message",
-          scope: "geral",
           user: ws.user,
           text: data.text
         }));
@@ -59,26 +62,26 @@ wss.on("connection", ws => {
     }
 
     /* =========================
-       🔥 MENSAGEM PRIVADA
+       PRIVATE MESSAGE
     ========================= */
+
     if (data.type === "private-message") {
       const room = ws.roomId;
       if (!room || !rooms[room]) return;
 
-      const from = data.from;
-      const to = data.to;
+      const { to, text } = data;
+      if (!to || !text) return;
 
       rooms[room].forEach(client => {
         if (
           client.user?.name === to ||
-          client.user?.name === from
+          client === ws
         ) {
           client.send(JSON.stringify({
             type: "private-message",
-            from,
-            to,
+            from: ws.user.name,
             user: ws.user,
-            text: data.text
+            text
           }));
         }
       });
@@ -89,6 +92,7 @@ wss.on("connection", ws => {
     /* =========================
        TYPING
     ========================= */
+
     if (data.type === "typing") {
       const room = ws.roomId;
       if (!room) return;
@@ -122,6 +126,7 @@ wss.on("connection", ws => {
 /* =========================
    KEEP ALIVE
 ========================= */
+
 setInterval(() => {
   wss.clients.forEach(ws => {
     if (!ws.isAlive) return ws.terminate();
@@ -133,6 +138,7 @@ setInterval(() => {
 /* =========================
    ONLINE LIST
 ========================= */
+
 function sendOnlineList(roomId) {
   const users = Array.from(rooms[roomId]).map(ws => ws.user);
 
@@ -147,6 +153,7 @@ function sendOnlineList(roomId) {
 /* =========================
    TYPING STATUS
 ========================= */
+
 function broadcastTyping(roomId) {
   if (!typingUsers[roomId]) return;
 
@@ -160,4 +167,5 @@ function broadcastTyping(roomId) {
     }));
   });
 }
+
 
