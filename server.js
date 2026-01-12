@@ -50,10 +50,16 @@ function sendPresenceTo(ws) {
     const mutual = isMutualFriend(viewerName, targetName);
 
     payload.push({
-      name: targetName,
-      room: mutual ? targetData.roomId : null,
-      canSeeRoom: mutual
-    });
+  name: targetName,
+  room: mutual ? targetData.roomId : null,
+  canSeeRoom: mutual,
+
+  // 🔹 DADOS VISUAIS
+  emoji: targetData.ws.user.emoji,
+  role: targetData.ws.user.role,
+  avatar: targetData.ws.user.avatar || null
+});
+
   });
 
   ws.send(JSON.stringify({
